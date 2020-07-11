@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.stats import skew, kurtosis
+from scipy.stats import skew, kurtosis, zscore
 
 
 def load_data():
@@ -22,6 +22,7 @@ def load_data():
     # generate additional information
     df['high_low'] = df['VIX High'] - df['VIX Low']
     df['open_close'] = df['VIX Open'] - df['VIX Close']
+    df['log_return'] = np.log(df['VIX Close'].shift(1) / df['VIX Close'])
 
     # generate grouping variables
     the_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
@@ -189,7 +190,6 @@ def mean_reverting(df):
     mu = df['VIX Close'].mean()  # long run VIX mean
     sig = df['VIX Close'].std()  # standard deviation of VIX
     theta = 1 / 2  # mean reversion rate
-    weiner_var = sig * sig / (2 * theta)  # variance of the Weiner process
     x_0 = df['VIX Close'][0]  # start the process at the first VIX calculation
 
     T = 31  # time in years
@@ -208,6 +208,94 @@ def mean_reverting(df):
         x[:, i + 1] = np.abs(x[:, i] + theta * (mu - x[:, i]) * delta_t + sig * np.sqrt(delta_t) * z[:, i])
 
     return x
+
+
+def modified_reverting(df):
+    mu = df['VIX Close'].mean()  # long run VIX mean
+    sig = df['VIX Close'].std()  # standard deviation of VIX
+    theta = 1 / 2  # mean reversion rate
+    x_0 = df['VIX Close'][0]  # start the process at the first VIX calculation
+
+    T = 31  # time in years
+    n = 250 * T  # points per year
+    m = 100  # number of simulations (paths)
+    delta_t = T / n  # time mesh
+
+    x = np.ones((m, n + 1))
+    x[:, 0] = x_0
+
+    z = np.random.normal(0, 1, (m, n))  # standard normal observations
+    # We take the absolute value to reflect the process off the X axis if it goes negative.
+    # The negativity is due to the discretization, and because the Feller condition is violated
+    # See: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=946405 for better implementation
+    for i in range(0, n):
+        x[:, i + 1] = np.abs(x[:, i] + theta * (mu - x[:, i]) * delta_t + sig * np.sqrt(delta_t) * z[:, i])
+
+    return x
+
+
+def jump_stats(df):
+
+    # % of the time that the VIX closed 3 std deviations about of its mean
+    spike_freq = len(df[(zscore(df['VIX Close'], nan_policy='omit') > 3)]['VIX Close']) / len(df) * 100
+    '''
+    plt.figure(13212311)
+    a = df[(zscore(df['VIX Close'], nan_policy='omit') > 3)]['VIX Close']
+    b = df[(zscore(df['VIX Close'], nan_policy='omit') < 3)]['VIX Close']
+    plt.plot(a, marker='.')
+    plt.plot(b, marker='.')
+    plt.show()
+    '''
+
+    # % of times the VIX has been 30% higher 10 days later
+    # increase_freq = df[df['VIX Close'].shift(10) >= 1.3 * df['VIX Close']]['VIX Close']
+
+    # loop through and grab every 30% change in 1-10 days, and then take the unique on dates to avoid double count
+    temp = df[df['VIX Close'].shift(1) >= 1.3 * df['VIX Close']]['VIX Close']
+    for i in range(2, 11):
+        x = pd.concat([temp, df[df['VIX Close'].shift(i) >= 1.3 * df['VIX Close']]['VIX Close']])
+
+    x = x.index.unique()
+    increase_freq = len(x)/len(df)*100
+    '''
+    plt.figure(1333)
+    a = df.loc[x]['VIX Close']
+    b = df[df.index.isin(x)==0]['VIX Close']
+    plt.plot(a, '.')
+    plt.plot(b, ',')
+    plt.show()
+    '''
+    return spike_freq, increase_freq
+
+
+def believe_online(df):
+    p_bar = 11.75 #df['VIX Close'].mean()  # long run VIX mean
+    sig = df['VIX Close'].std()*np.sqrt(250)/100 # standard deviation of VIX
+    theta = 1 / 3  # mean reversion rate
+    p_0 = df['VIX Close'][0]  # start the process at the first VIX calculation
+
+    T = 31  # time in years
+    n = 250 * T  # points per year
+    m = 100  # number of simulations (paths)
+    delta_t = T / n  # time mesh
+
+    p = np.ones((m, n + 1))
+    x = np.ones((m, n + 1))
+    p[:, 0] = p_0
+    x[:, 0] = np.log(p_0)
+
+    z = np.random.normal(0, 1, (m, n))  # standard normal observations
+    # We take the absolute value to reflect the process off the X axis if it goes negative.
+    # The negativity is due to the discretization, and because the Feller condition is violated
+    # See: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=946405 for better implementation
+    # check the delta_t vs t
+    for i in range(0, n):
+        t1 = x[:, i]*np.exp(-theta*delta_t)
+        t2 = np.log(p_bar)*(1-np.exp(-theta*delta_t))
+        t3 = sig*np.sqrt((1-np.exp(-2*theta*delta_t))/(2*theta))*z[:,i]
+        x[:, i+1] = t1+t2+t3
+        p[:, i + 1] = np.exp(x[:,i+1]-0.5*((1-np.exp(-2*theta*i*delta_t))*(sig*sig*0.5/theta)))
+    return p
 
 
 def double_mean_reverting(df):
@@ -246,6 +334,36 @@ def double_mean_reverting(df):
     return x, v
 
 
+def jump_mean_reverting(df):
+    mu = df['VIX Close'].mean()  # long run VIX mean
+    sig = df['VIX Close'].std()  # standard deviation of VIX
+    theta = 1 / 2  # mean reversion rate
+    x_0 = df['VIX Close'][0]  # start the process at the first VIX calculation
+
+    T = 31  # time in years
+    n = 250 * T  # points per year
+    m = 100  # number of simulations (paths)
+    delta_t = T / n  # time mesh
+    # TODO change the 3 to some observed jump rate, currently about once every 5 years
+    lam = 6 / n  # unfortunately lambda is a keyword!
+
+    x = np.ones((m, n + 1))
+    x[:, 0] = x_0
+
+    z = np.random.normal(0, 1, (m, n))  # standard normal observations
+    q = np.random.poisson(lam, (m, n))
+    # TODO fix j
+    j = np.random.normal(0, 1, (m, n))  # standard normal observations for jump
+    # We take the absolute value to reflect the process off the X axis if it goes negative.
+    # The negativity is due to the discretization, and because the Feller condition is violated
+    # See: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=946405 for better implementation
+    for i in range(0, n):
+        x[:, i + 1] = np.abs(x[:, i] + theta * (mu - x[:, i]) * delta_t + sig * np.sqrt(delta_t) * z[:, i])
+        + x[:, i] * abs(q[:, i]) * 2
+
+    return x
+
+
 def plot_sims(df, sim_df, col_name='VIX Close', title_name='VIX vs Sim', num_plots=5):
     if col_name == 'VIX Close':
         label = "VIX"
@@ -282,8 +400,9 @@ def compare_stats(df, sim_df, sim_name, num_sims=3):
     data = np.array([df.mean(), df.std(), skew(df, nan_policy='omit').mean(), kurtosis(df, nan_policy='omit')])
     data_labels = ['VIX']
     for i in range(0, num_sims):
-        data = np.vstack((data,np.array([sim_df[i, :].mean(), sim_df[i, :].std(), skew(sim_df[i, :], nan_policy='omit'),
-                     kurtosis(sim_df[i, :], nan_policy='omit')])))
+        data = np.vstack(
+            (data, np.array([sim_df[i, :].mean(), sim_df[i, :].std(), skew(sim_df[i, :], nan_policy='omit'),
+                             kurtosis(sim_df[i, :], nan_policy='omit')])))
         data_labels = np.concatenate((data_labels, [sim_name + ' ' + str(i)]))
     print(pd.DataFrame(data, data_labels, ['Mean', 'StDev', 'Skew', 'Kurtosis']))
 
@@ -296,12 +415,18 @@ def main():
     # grp_plot(df, type='box', intraday=False)
     static_vix = mean_reverting(df)  # MR simulation
     dynamic_vix, static_vvix = double_mean_reverting(df)  # double MR simulation
-    plot_sims(df, static_vix, num_plots=3)
-    plot_sims(df, dynamic_vix, num_plots=3)
-    plot_sims(df, static_vvix, col_name='VVIX Close', num_plots=3)
-    compare_stats(df['VIX Close'], static_vix, 'Static VIX')
-    compare_stats(df['VIX Close'], dynamic_vix, 'Dynamic VIX')
-    compare_stats(df['VVIX Close'], static_vvix, 'Static VVIX')
+    jump_vix = jump_mean_reverting(df)
+    online = believe_online(df)
+    # plot_sims(df, static_vix, num_plots=3)
+    # plot_sims(df, dynamic_vix, num_plots=3)
+    # plot_sims(df, static_vvix, col_name='VVIX Close', num_plots=3)
+    # plot_sims(df, jump_vix, num_plots=5)
+    plot_sims(df, online, num_plots=5)
+    jump_stats(df)
+    # compare_stats(df['VIX Close'], static_vix, 'Static VIX')
+    # compare_stats(df['VIX Close'], dynamic_vix, 'Dynamic VIX')
+    # compare_stats(df['VVIX Close'], static_vvix, 'Static VVIX')
+    # compare_stats(df['VIX Close'], jump_vix, 'Jump VIX', num_sims=5)
 
     # corr_plot(df, dynamic_vix, static_vvix)
 
