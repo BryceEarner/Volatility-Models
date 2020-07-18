@@ -31,6 +31,7 @@ def load_data():
                  'July', 'August', 'September', 'October', 'November', 'December']
     df['month'] = pd.Categorical(df.index.month_name(), the_order)
     df['week'] = df.index.strftime("%V")
+    df['year'] = df.index.strftime("%Y")
 
     df.rename(columns={'VVIX': 'VVIX Close'}, inplace=True)
     return df
@@ -58,6 +59,7 @@ def plot_timeseries(df):
     plt.title('Vix Close')
     plt.show()
 
+    '''
     plt.figure(2)
     y = df['VIX Close']
     y1 = df['VIX Close'].rolling(window=5).apply(lambda x: np.nanmean(x))
@@ -81,6 +83,7 @@ def plot_timeseries(df):
     # plt.plot(x, y3, label='100EMA')
     plt.legend()
     plt.show()
+    '''
 
     plt.figure(4)
     y = df['VIX Close']
@@ -98,21 +101,18 @@ def plot_timeseries(df):
     plt.show()
 
 
-def grp_plot(df, type='box', intraday=False):
-    if intraday:
-        col = 'high_low'
-    else:
-        col = 'VIX Close'
-
+def grp_plot(df, type='box', col='VIX_Close'):
     # Group data
     day_grp = df.groupby('day')[col]
     week_grp = df.groupby('week')[col]
     month_grp = df.groupby('month')[col]
+    year_grp = df.groupby('year')[col]
 
     if type == 'bar':
         day_grp = pd.DataFrame(day_grp.mean())
         week_grp = pd.DataFrame(week_grp.mean())
         month_grp = pd.DataFrame(month_grp.mean())
+        year_grp = pd.DataFrame(year_grp.mean())
 
     plt.figure(0)
     if type == 'bar':
@@ -123,13 +123,10 @@ def grp_plot(df, type='box', intraday=False):
         plt.suptitle("")
         plt.xlabel("")
 
-    if intraday:
-        plt.title('Average VIX Width Per Day')
-    else:
-        plt.title('Average VIX Close Per Day')
+    plt.title(col+' Per Day')
     plt.xlabel('')
     plt.show()
-
+    '''
     plt.figure(1)
     if type == 'bar':
         week_grp.plot(kind=type, legend=None)
@@ -143,7 +140,7 @@ def grp_plot(df, type='box', intraday=False):
     else:
         plt.title('Average VIX Close Per Week')
     plt.show()
-
+    '''
     plt.figure(2)
     if type == 'bar':
         month_grp.plot(kind=type, legend=None)
@@ -153,10 +150,26 @@ def grp_plot(df, type='box', intraday=False):
         plt.suptitle("")
     plt.xlabel("")
 
-    if intraday:
-        plt.title('Average VIX Width Per Month')
+    plt.title(col + ' Per Month')
+
+    plt.show()
+
+
+    plt.figure(3)
+    if type == 'bar':
+        year_grp.plot(kind=type, legend=None)
     else:
-        plt.title('Average VIX Close Per Month')
+        labels = [str(i - 1900) if i < 2000 else str(i - 2000) for i in range(1990, 2021)]
+        labels = [i if len(i) == 2 else '0' + i for i in labels]
+        plt.figure(3123)
+        temp = df.sort_values(by='year')
+        temp.boxplot(column=col, by='year')
+        plt.xticks(ticks=range(1, len(temp['year'].unique())+1), labels=labels)
+        plt.suptitle("")
+
+    plt.xlabel("")
+    plt.title(col + ' Per Year')
+
     plt.show()
 
 
@@ -175,10 +188,12 @@ def build_dist(df):
     df.groupby('month')['VIX Close'].plot(kind='hist', bins=bin_size, alpha=.4, legend=True, density=True)
     plt.title('VIX Close by Month')
     plt.show()
+    '''
     plt.figure(3)
     df.groupby('week')['VIX Close'].plot(kind='hist', bins=bin_size, alpha=.4, legend=True, density=True)
     plt.title('VIX Close by Week')
     plt.show()
+    '''
     plt.figure(4)
     bin_size = np.arange(start=0, stop=20, step=0.1)
     df.groupby('day')['high_low'].plot(kind='hist', bins=bin_size, alpha=.4, legend=True, density=True)
@@ -235,7 +250,6 @@ def modified_reverting(df):
 
 
 def jump_stats(df):
-
     # % of the time that the VIX closed 3 std deviations about of its mean
     spike_freq = len(df[(zscore(df['VIX Close'], nan_policy='omit') > 3)]['VIX Close']) / len(df) * 100
     '''
@@ -256,7 +270,7 @@ def jump_stats(df):
         x = pd.concat([temp, df[df['VIX Close'].shift(i) >= 1.3 * df['VIX Close']]['VIX Close']])
 
     x = x.index.unique()
-    increase_freq = len(x)/len(df)*100
+    increase_freq = len(x) / len(df) * 100
     '''
     plt.figure(1333)
     a = df.loc[x]['VIX Close']
@@ -269,8 +283,8 @@ def jump_stats(df):
 
 
 def believe_online(df):
-    p_bar = 11.75 #df['VIX Close'].mean()  # long run VIX mean
-    sig = df['VIX Close'].std()*np.sqrt(250)/100 # standard deviation of VIX
+    p_bar = 11.75  # df['VIX Close'].mean()  # long run VIX mean
+    sig = df['VIX Close'].std() * np.sqrt(250) / 100  # standard deviation of VIX
     theta = 1 / 3  # mean reversion rate
     p_0 = df['VIX Close'][0]  # start the process at the first VIX calculation
 
@@ -290,11 +304,11 @@ def believe_online(df):
     # See: https://papers.ssrn.com/sol3/papers.cfm?abstract_id=946405 for better implementation
     # check the delta_t vs t
     for i in range(0, n):
-        t1 = x[:, i]*np.exp(-theta*delta_t)
-        t2 = np.log(p_bar)*(1-np.exp(-theta*delta_t))
-        t3 = sig*np.sqrt((1-np.exp(-2*theta*delta_t))/(2*theta))*z[:,i]
-        x[:, i+1] = t1+t2+t3
-        p[:, i + 1] = np.exp(x[:,i+1]-0.5*((1-np.exp(-2*theta*i*delta_t))*(sig*sig*0.5/theta)))
+        t1 = x[:, i] * np.exp(-theta * delta_t)
+        t2 = np.log(p_bar) * (1 - np.exp(-theta * delta_t))
+        t3 = sig * np.sqrt((1 - np.exp(-2 * theta * delta_t)) / (2 * theta)) * z[:, i]
+        x[:, i + 1] = t1 + t2 + t3
+        p[:, i + 1] = np.exp(x[:, i + 1] - 0.5 * ((1 - np.exp(-2 * theta * i * delta_t)) * (sig * sig * 0.5 / theta)))
     return p
 
 
@@ -409,10 +423,11 @@ def compare_stats(df, sim_df, sim_name, num_sims=3):
 
 def main():
     df = load_data()
-    # plot_timeseries(df)
-    # build_dist(df)
-    # grp_plot(df, type='bar', intraday=False)
-    # grp_plot(df, type='box', intraday=False)
+    #plot_timeseries(df)
+    #build_dist(df)
+    grp_plot(df, type='box', col='VIX Close')
+    grp_plot(df, type='box', col='VVIX Close')
+    grp_plot(df, type='box', col='high_low')
     static_vix = mean_reverting(df)  # MR simulation
     dynamic_vix, static_vvix = double_mean_reverting(df)  # double MR simulation
     jump_vix = jump_mean_reverting(df)
@@ -421,8 +436,8 @@ def main():
     # plot_sims(df, dynamic_vix, num_plots=3)
     # plot_sims(df, static_vvix, col_name='VVIX Close', num_plots=3)
     # plot_sims(df, jump_vix, num_plots=5)
-    plot_sims(df, online, num_plots=5)
-    jump_stats(df)
+    # plot_sims(df, online, num_plots=5)
+    # jump_stats(df)
     # compare_stats(df['VIX Close'], static_vix, 'Static VIX')
     # compare_stats(df['VIX Close'], dynamic_vix, 'Dynamic VIX')
     # compare_stats(df['VVIX Close'], static_vvix, 'Static VVIX')
